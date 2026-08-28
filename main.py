@@ -592,7 +592,6 @@ async def post_shutdown(application):
         await session.close()
 
 def main():
-    keep_alive()
     app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -606,7 +605,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("Bot is running...")
-    app.run_polling(bootstrap_retries=10)
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
+    keep_alive()
     main()
