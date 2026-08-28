@@ -616,6 +616,13 @@ async def post_shutdown(application):
         await session.close()
 
 def main():
+    # إنشاء event loop صريح متوافق مع Python 3.14
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     keep_alive()
     app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
 
