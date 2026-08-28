@@ -591,7 +591,13 @@ async def post_shutdown(application):
     if session and not session.closed:
         await session.close()
 
+import asyncio
+
 def main():
+    # إنشاء وضبط Event Loop صريح متوافق مع Python 3.14
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
 
     app.add_handler(CommandHandler("start", start))
