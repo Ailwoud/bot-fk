@@ -8,9 +8,26 @@ import urllib.parse
 import aiohttp
 import psycopg2
 from datetime import datetime
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from telegram.helpers import escape_markdown
+
+# --- سيرفر وهمي لإبقاء البوت شغالاً على Render Web Service ---
+app_web = Flask('')
+
+@app_web.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    app_web.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+# --------------------------------------------------------
 
 TOKEN = "8690507539:AAGzS1KPNcV2HZk6t6eOqrJdS7lnRRM9ZTA"
 OWNER_ID = 8138168728
@@ -575,6 +592,7 @@ async def post_shutdown(application):
         await session.close()
 
 def main():
+    keep_alive()
     app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
 
     app.add_handler(CommandHandler("start", start))
