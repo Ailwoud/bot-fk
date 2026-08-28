@@ -12,14 +12,13 @@ from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
-from telegram.helpers import escape_markdown
 
-# --- سيرفر وهمي لإبقاء البوت شغالاً على Render Web Service ---
+# --- سيرفر وهمي لإبقاء البوت شغالاً 24/7 على Render Web Service ---
 app_web = Flask('')
 
 @app_web.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot is running online!"
 
 def run_web():
     app_web.run(host='0.0.0.0', port=8080)
@@ -51,7 +50,7 @@ EMOJI_ID_INDIAN = "6323256281456970434"
 EMOJI_ID_BRAZIL = "6323256281456970435"
 
 RIGHTS_TEXT = {
-    "ar": "\n\n— — — — — — — — —\n🛠 **Devs:** [s8s8sss](https://t.me/s8s8sss) | [mp8_d](https://t.me/mp8_d)",
+    "ar": "\n\n— — — — — — — — —\n🛠 **المطورين:** [s8s8sss](https://t.me/s8s8sss) | [mp8_d](https://t.me/mp8_d)",
     "en": "\n\n— — — — — — — — —\n🛠 **Devs:** [s8s8sss](https://t.me/s8s8sss) | [mp8_d](https://t.me/mp8_d)"
 }
 
@@ -97,24 +96,25 @@ HEADERS = {
     'origin': 'https://www.instagram.com',
 }
 
-def create_button(text, web_app_url=None, color=None, icon_emoji_id=None, callback_data=None, url=None):
-    try:
-        return InlineKeyboardButton(
-            text=text,
-            web_app=WebAppInfo(url=web_app_url) if web_app_url else None,
-            callback_data=callback_data,
-            url=url,
-            style=color,
-            icon_custom_emoji_id=icon_emoji_id
-        )
-    except TypeError:
-        return InlineKeyboardButton(
-            text=text,
-            web_app=WebAppInfo(url=web_app_url) if web_app_url else None,
-            callback_data=callback_data,
-            url=url
-        )
+def create_button(text, web_app_url=None, callback_data=None, url=None, icon_emoji_id=None):
+    kwargs = {'text': text}
+    if web_app_url:
+        kwargs['web_app'] = WebAppInfo(url=web_app_url)
+    elif callback_data:
+        kwargs['callback_data'] = callback_data
+    elif url:
+        kwargs['url'] = url
 
+    if icon_emoji_id:
+        kwargs['icon_custom_emoji_id'] = icon_emoji_id
+
+    try:
+        return InlineKeyboardButton(**kwargs)
+    except TypeError:
+        kwargs.pop('icon_custom_emoji_id', None)
+        return InlineKeyboardButton(**kwargs)
+
+# --- آليات فحص إنستغرام بدون أي تعديل ---
 async def get_logged_in_username(session):
     try:
         async with session.get("https://www.instagram.com/", headers=HEADERS, cookies=get_cookies(), timeout=30) as resp:
@@ -188,6 +188,7 @@ async def fetch_profile_info(session, username: str) -> bool:
     except:
         return True
 
+# --- إدارة قاعدة البيانات ---
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
@@ -256,6 +257,7 @@ def update_monitor_status(username, new_status):
     c.close()
     conn.close()
 
+# --- دالة المراقبة المستمرة ---
 async def monitor_loop(application):
     await asyncio.sleep(5)
     session = application.bot_data.get("http_session")
@@ -276,12 +278,12 @@ async def monitor_loop(application):
                             update_monitor_status(username, new_status)
                             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             profile_link = f"https://instagram.com/{username}"
-                            keyboard = [[InlineKeyboardButton("🔗 Open Instagram / فتح إنستغرام", url=profile_link)]]
+                            keyboard = [[InlineKeyboardButton("🔗 Instagram Profile", url=profile_link)]]
                             reply_markup = InlineKeyboardMarkup(keyboard)
 
                             if new_status == 1:
                                 caption = (
-                                    f"🚨 **حساب محظور! / Banned Account!**\n\n"
+                                    f"🚨 **تنبيه: تم حظر الحساب! / Account Banned!**\n\n"
                                     f"👤 User / اليوزر: `@{username}`\n"
                                     f"📊 Status / الحالة: 🔴 محظور (Banned)\n"
                                     f"⏰ Time / الوقت: `{current_time}`"
@@ -289,7 +291,7 @@ async def monitor_loop(application):
                                 )
                             else:
                                 caption = (
-                                    f"🎉 **حساب متاح! / Unbanned Account!**\n\n"
+                                    f"🎉 **تنبيه: تم فك الحظر! / Account Unbanned!**\n\n"
                                     f"👤 User / اليوزر: `@{username}`\n"
                                     f"📊 Status / الحالة: 🟢 نشط (Active)\n"
                                     f"⏰ Time / الوقت: `{current_time}`"
@@ -311,9 +313,7 @@ async def monitor_loop(application):
         except Exception:
             await asyncio.sleep(30)
 
-def is_admin(update):
-    return update.effective_user.id in (OWNER_ID, ADMIN_ID)
-
+# --- الواجهات والكلايش المنسقة ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [
@@ -321,7 +321,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")
         ]
     ])
-    text = "🌐 **يرجى اختيار اللغة / Please select your language:**"
+    text = "🌐 **اختر اللغة / Choose Language:**"
     
     if update.callback_query:
         await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
@@ -331,30 +331,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get('lang', 'ar')
     user_id = update.effective_user.id
-    is_owner = (user_id == OWNER_ID)
+    is_owner = (user_id in (OWNER_ID, ADMIN_ID))
 
     if lang == "ar":
         btn_add = create_button("➕ إضافة حساب", callback_data="add_user")
         btn_delete = create_button("➖ حذف حساب", callback_data="delete_user")
         btn_group = create_button("👥 القناة الرسمية", url=GROUP_LINK)
-        btn_dev = create_button("💬 التواصل مع المطور", url=DEV_LINK)
+        btn_dev = create_button("💬 المطور", url=DEV_LINK)
         btn_help = create_button("❓ التعليمات", callback_data="show_help")
         btn_check = create_button("🔍 فحص سريع", callback_data="check_user")
         btn_list = create_button("📜 قائمة المراقبة", callback_data="list_users")
-        btn_india = create_button("🇮🇳 رابط الهندي", web_app_url=INDIAN_URL, icon_emoji_id=EMOJI_ID_INDIAN)
-        btn_brazil = create_button("🇧🇷 رابط البرازيلي", web_app_url=BRAZIL_URL, icon_emoji_id=EMOJI_ID_BRAZIL)
-        caption = f"⚡️ **لوحة التحكم المباشرة (24/7)**\nاختر الخدمة المطلوبة من الأسفل:{RIGHTS_TEXT['ar']}"
+        btn_india = create_button("🇮🇳 الرابط الهندي", web_app_url=INDIAN_URL, icon_emoji_id=EMOJI_ID_INDIAN)
+        btn_brazil = create_button("🇧🇷 الرابط البرازيلي", web_app_url=BRAZIL_URL, icon_emoji_id=EMOJI_ID_BRAZIL)
+        caption = f"✨ **أهلاً بك في لوحة المراقبة السريعة**\n\nاختر من القائمة أدناه الخدمة المطلوبة:{RIGHTS_TEXT['ar']}"
     else:
         btn_add = create_button("➕ Add Account", callback_data="add_user")
         btn_delete = create_button("➖ Remove Account", callback_data="delete_user")
         btn_group = create_button("👥 Official Channel", url=GROUP_LINK)
-        btn_dev = create_button("💬 Contact Developer", url=DEV_LINK)
+        btn_dev = create_button("💬 Developer", url=DEV_LINK)
         btn_help = create_button("❓ Help", callback_data="show_help")
         btn_check = create_button("🔍 Quick Check", callback_data="check_user")
         btn_list = create_button("📜 Monitor List", callback_data="list_users")
         btn_india = create_button("🇮🇳 Indian Form", web_app_url=INDIAN_URL, icon_emoji_id=EMOJI_ID_INDIAN)
         btn_brazil = create_button("🇧🇷 Brazil Form", web_app_url=BRAZIL_URL, icon_emoji_id=EMOJI_ID_BRAZIL)
-        caption = f"⚡️ **Control Panel (24/7)**\nSelect a service from below:{RIGHTS_TEXT['en']}"
+        caption = f"✨ **Welcome to Control Panel**\n\nSelect a service from below:{RIGHTS_TEXT['en']}"
 
     if is_owner:
         keyboard = [
@@ -385,26 +385,33 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
+    else:
+        await update.message.reply_animation(
+            animation=OWNER_START_GIF_URL if is_owner else MONITOR_START_GIF_URL,
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get('lang', 'ar')
     if lang == "ar":
         text = (
-            f"📖 **دليل الاستخدام السريع:**\n\n"
+            f"🛠 **قائمة الأوامر السريعة:**\n\n"
             f"• `/chk username` ⇦ فحص حساب فوري.\n"
-            f"• `/add username` ⇦ إضافة حساب للمراقبة.\n"
-            f"• `/delete username` ⇦ حذف حساب من المراقبة.\n"
-            f"• `/status` ⇦ عرض قائمة المراقبة للمجموعة."
+            f"• `/add username` ⇦ إضافة حساب للمراقبة 24/7.\n"
+            f"• `/delete username` ⇦ إزالة حساب من المراقبة.\n"
+            f"• `/status` ⇦ عرض قائمة الحسابات المراقبة."
             f"{RIGHTS_TEXT['ar']}"
         )
-        back_btn = InlineKeyboardButton("🔙 العودة", callback_data="back_start")
+        back_btn = InlineKeyboardButton("🔙 عودة", callback_data="back_start")
     else:
         text = (
-            f"📖 **Quick Guide:**\n\n"
-            f"• `/chk username` ⇦ Check account status.\n"
-            f"• `/add username` ⇦ Add to 24/7 monitor.\n"
-            f"• `/delete username` ⇦ Remove from monitor.\n"
-            f"• `/status` ⇦ View monitor list."
+            f"🛠 **Commands Guide:**\n\n"
+            f"• `/chk username` ⇦ Instant account check.\n"
+            f"• `/add username` ⇦ Add to 24/7 monitoring.\n"
+            f"• `/delete username` ⇦ Remove from monitoring.\n"
+            f"• `/status` ⇦ View monitored accounts list."
             f"{RIGHTS_TEXT['en']}"
         )
         back_btn = InlineKeyboardButton("🔙 Back", callback_data="back_start")
@@ -418,27 +425,40 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
-async def chk_command(update, context):
+async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get('lang', 'ar')
     if not context.args:
-        msg = "⚠️ **الاستخدام:** `/chk username`\n⚠️ **Usage:** `/chk username`"
+        msg = "⚠️ **يرجى كتابة اليوزر مع الأمر:**\n`/chk username`" if lang == "ar" else "⚠️ **Please provide username:**\n`/chk username`"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
+
     username = context.args[0].replace("@", "").strip()
-    wait_txt = f"🔍 **جاري الفحص `@{username}`...**\n🔍 **Checking `@{username}`...**"
+    wait_txt = f"⏳ **جاري فحص `@{username}`...**" if lang == "ar" else f"⏳ **Checking `@{username}`...**"
     wait_msg = await update.message.reply_text(wait_txt, parse_mode="Markdown")
     session = context.application.bot_data.get("http_session")
 
     is_banned = await fetch_profile_info(session, username)
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Instagram", url=f"https://instagram.com/{username}")]])
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Open Instagram", url=f"https://instagram.com/{username}")]])
 
     if lang == "ar":
         status_str = "🔴 محظور (Banned)" if is_banned else "🟢 نشط (Active)"
-        caption = f"📊 **نتيجة الفحص:**\n\n👤 الحساب: `@{username}`\n📌 الحالة: **{status_str}**\n⏰ الوقت: `{current_time}`{RIGHTS_TEXT['ar']}"
+        caption = (
+            f"📊 **نتيجة فحص الحساب:**\n\n"
+            f"👤 اليوزر: `@{username}`\n"
+            f"📌 الحالة: **{status_str}**\n"
+            f"⏰ الوقت: `{current_time}`"
+            f"{RIGHTS_TEXT['ar']}"
+        )
     else:
         status_str = "🔴 Banned" if is_banned else "🟢 Active"
-        caption = f"📊 **Check Result:**\n\n👤 User: `@{username}`\n📌 Status: **{status_str}**\n⏰ Time: `{current_time}`{RIGHTS_TEXT['en']}"
+        caption = (
+            f"📊 **Account Check Result:**\n\n"
+            f"👤 User: `@{username}`\n"
+            f"📌 Status: **{status_str}**\n"
+            f"⏰ Time: `{current_time}`"
+            f"{RIGHTS_TEXT['en']}"
+        )
 
     gif_url = BAN_GIF_URL if is_banned else UNBAN_GIF_URL
     try:
@@ -447,10 +467,10 @@ async def chk_command(update, context):
     except:
         await wait_msg.edit_text(caption, parse_mode="Markdown", reply_markup=reply_markup)
 
-async def add_command(update, context):
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get('lang', 'ar')
     if not context.args:
-        msg = "⚠️ **الاستخدام:** `/add username`\n⚠️ **Usage:** `/add username`"
+        msg = "⚠️ **يرجى إرسال اليوزر:**\n`/add username`" if lang == "ar" else "⚠️ **Usage:**\n`/add username`"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
     username = context.args[0].replace("@", "").strip()
@@ -458,35 +478,35 @@ async def add_command(update, context):
 
     is_banned = await fetch_profile_info(session, username)
     if add_monitor(update.effective_chat.id, username, 1 if is_banned else 0):
-        txt = f"✅ **تمت الإضافة `@{username}` بنجاح!**{RIGHTS_TEXT['ar']}" if lang == "ar" else f"✅ **Added `@{username}` successfully!**{RIGHTS_TEXT['en']}"
+        txt = f"✅ **تمت إضافة `@{username}` إلى قائمة المراقبة!**{RIGHTS_TEXT['ar']}" if lang == "ar" else f"✅ **Added `@{username}` to monitor!**{RIGHTS_TEXT['en']}"
     else:
-        txt = f"⚠️ **الحساب `@{username}` مضاف مسبقاً.**" if lang == "ar" else f"⚠️ **`@{username}` is already added.**"
+        txt = f"⚠️ **اليوزر `@{username}` موجود بالفعل في المراقبة.**" if lang == "ar" else f"⚠️ **`@{username}` is already monitored.**"
     await update.message.reply_text(txt, parse_mode="Markdown")
 
-async def delete_command(update, context):
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get('lang', 'ar')
     if not context.args:
-        msg = "⚠️ **الاستخدام:** `/delete username`\n⚠️ **Usage:** `/delete username`"
+        msg = "⚠️ **يرجى إرسال اليوزر:**\n`/delete username`" if lang == "ar" else "⚠️ **Usage:**\n`/delete username`"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
     username = context.args[0].replace("@", "").strip()
     if remove_monitor(username):
-        txt = f"🗑 **تم حذف `@{username}` من المراقبة.**{RIGHTS_TEXT['ar']}" if lang == "ar" else f"🗑 **Removed `@{username}` from monitor.**{RIGHTS_TEXT['en']}"
+        txt = f"🗑 **تم إزالة `@{username}` من المراقبة.**{RIGHTS_TEXT['ar']}" if lang == "ar" else f"🗑 **Removed `@{username}` from monitor.**{RIGHTS_TEXT['en']}"
     else:
-        txt = f"⚠️ **الحساب `@{username}` غير موجود.**" if lang == "ar" else f"⚠️ **`@{username}` not found.**"
+        txt = f"⚠️ **اليوزر `@{username}` غير موجود في المراقبة.**" if lang == "ar" else f"⚠️ **`@{username}` not found.**"
     await update.message.reply_text(txt, parse_mode="Markdown")
 
-async def status_command(update, context):
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get('lang', 'ar')
     monitors = get_all_monitors()
     current_chat_monitors = [m for m in monitors if m[0] == update.effective_chat.id]
 
     if not current_chat_monitors:
-        msg = "📜 **لا توجد حسابات مراقبة هنا.**" if lang == "ar" else "📜 **No monitored accounts here.**"
+        msg = "📜 **لا توجد حسابات مراقبة حالياً.**" if lang == "ar" else "📜 **No monitored accounts found.**"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
-    msg = "📋 **المراقبة الحالية:**\n\n" if lang == "ar" else "📋 **Monitored Accounts:**\n\n"
+    msg = "📋 **الحسابات المراقبة حالياً:**\n\n" if lang == "ar" else "📋 **Current Monitored Accounts:**\n\n"
     for chat_id, username, last_status in current_chat_monitors:
         status = "🔴 محظور (Banned)" if last_status == 1 else "🟢 نشط (Active)"
         msg += f"• `@{username}` ⇦ {status}\n"
@@ -514,15 +534,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "add_user":
         context.user_data['awaiting_action'] = 'add'
-        txt = "📥 **أرسل اليوزر للإضافة:**" if lang == "ar" else "📥 **Send username to add:**"
+        txt = "📥 **أرسل اسم المستخدم (اليوزر) لإضافته للمراقبة:**" if lang == "ar" else "📥 **Send the username to add to monitor:**"
         await query.message.reply_text(txt, parse_mode="Markdown")
     elif data == "delete_user":
         context.user_data['awaiting_action'] = 'delete'
-        txt = "🗑 **أرسل اليوزر للحذف:**" if lang == "ar" else "🗑 **Send username to remove:**"
+        txt = "🗑 **أرسل اسم المستخدم (اليوزر) لحذفه من المراقبة:**" if lang == "ar" else "🗑 **Send the username to remove:**"
         await query.message.reply_text(txt, parse_mode="Markdown")
     elif data == "check_user":
         context.user_data['awaiting_action'] = 'check'
-        txt = "🔍 **أرسل اليوزر للفحص:**" if lang == "ar" else "🔍 **Send username to check:**"
+        txt = "🔍 **أرسل اسم المستخدم (اليوزر) لفحصه فوراً:**" if lang == "ar" else "🔍 **Send the username to check instantly:**"
         await query.message.reply_text(txt, parse_mode="Markdown")
     elif data == "list_users":
         await show_all_users(query.message, lang)
@@ -530,10 +550,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_all_users(message, lang):
     rows = get_all_monitors()
     if not rows:
-        txt = "📜 **لا توجد حسابات تحت المراقبة.**" if lang == "ar" else "📜 **No accounts under monitoring.**"
+        txt = "📜 **قائمة المراقبة فارغة.**" if lang == "ar" else "📜 **Monitor list is empty.**"
         await message.reply_text(txt, parse_mode="Markdown")
         return
-    msg = "📋 **جميع الحسابات المراقبة:**\n\n" if lang == "ar" else "📋 **All Monitored Accounts:**\n\n"
+    msg = "📋 **جميع الحسابات المراقبة بالتطبيق:**\n\n" if lang == "ar" else "📋 **All Monitored Accounts:**\n\n"
     for chat_id, username, last_status in rows:
         status = "🔴 محظور (Banned)" if last_status == 1 else "🟢 نشط (Active)"
         msg += f"• `@{username}` ⇦ {status}\n"
@@ -541,6 +561,8 @@ async def show_all_users(message, lang):
     await message.reply_text(msg, parse_mode="Markdown")
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
     if update.effective_chat.type != "private":
         return
 
@@ -567,13 +589,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             txt = f"⚠️ **اليوزر `@{username}` غير موجود.**" if lang == "ar" else f"⚠️ **`@{username}` not found.**"
         await update.message.reply_text(txt, parse_mode="Markdown")
     elif action == 'check':
+        wait_msg = await update.message.reply_text(f"⏳ **جاري الفحص...**", parse_mode="Markdown")
         is_banned = await fetch_profile_info(session, username)
         status = "🔴 محظور (Banned)" if is_banned else "🟢 نشط (Active)"
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Instagram", url=f"https://instagram.com/{username}")]])
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Open Instagram", url=f"https://instagram.com/{username}")]])
         if lang == "ar":
-            txt = f"📊 حالة `@{username}`: **{status}**{RIGHTS_TEXT['ar']}"
+            txt = f"📊 نتيجة فحص `@{username}`: **{status}**{RIGHTS_TEXT['ar']}"
         else:
             txt = f"📊 Status of `@{username}`: **{status}**{RIGHTS_TEXT['en']}"
+        await wait_msg.delete()
         await update.message.reply_text(txt, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def post_init(application):
@@ -591,13 +615,8 @@ async def post_shutdown(application):
     if session and not session.closed:
         await session.close()
 
-import asyncio
-
 def main():
-    # إنشاء وضبط Event Loop صريح متوافق مع Python 3.14
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+    keep_alive()
     app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -611,8 +630,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("Bot is running...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(bootstrap_retries=10)
 
 if __name__ == "__main__":
-    keep_alive()
     main()
