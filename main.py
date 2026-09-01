@@ -62,7 +62,6 @@ if True:
   MAX_USERNAMES_PER_BATCH = 30
   MAX_USERNAMES_PER_USER = 15
   MAX_FAST_USERNAMES_PER_USER = 5
-  MAX_FAST_USERNAMES_TOTAL = 30
   FAST_SCAN_INTERVAL = 10
   LEGACY_ACTIVATION_DAYS = 30
   MAX_DURATION_DAYS = 3650
@@ -919,11 +918,6 @@ if True:
   def add_monitor(chat_id, username, initial_status, added_by=OWNER_ID, fast=False):
       conn = sqlite3.connect(DB_PATH)
       c = conn.cursor()
-      if fast:
-          c.execute("SELECT COUNT(*) FROM monitors WHERE scan_interval = ?", (FAST_SCAN_INTERVAL,))
-          if c.fetchone()[0] >= MAX_FAST_USERNAMES_TOTAL:
-              conn.close()
-              return False
       c.execute("SELECT id FROM monitors WHERE username = ?", (username,))
       if c.fetchone():
           conn.close()
@@ -1123,7 +1117,7 @@ if True:
 
   def get_user_limits(user_id):
       if user_is_admin(user_id):
-          return MAX_USERNAMES_PER_USER, MAX_FAST_USERNAMES_PER_USER
+          return 10**9, 10**9
       grant = get_access_grant(user_id)
       if not grant or not grant["active"]:
           return 0, 0
@@ -1139,24 +1133,9 @@ if True:
       return used
 
 
-  def get_fast_usage_total():
-      conn = sqlite3.connect(DB_PATH)
-      c = conn.cursor()
-      c.execute("SELECT COUNT(*) FROM monitors WHERE scan_interval = ?", (FAST_SCAN_INTERVAL,))
-      used = c.fetchone()[0]
-      conn.close()
-      return used
-
-
   def get_fast_remaining(user_id):
       _, fast_limit = get_user_limits(user_id)
-      return max(
-          0,
-          min(
-              fast_limit - get_usage(user_id, True),
-              MAX_FAST_USERNAMES_TOTAL - get_fast_usage_total(),
-          ),
-      )
+      return max(0, fast_limit - get_usage(user_id, True))
 
 
   def new_usernames_for_user(usernames):
@@ -1286,10 +1265,12 @@ if True:
 
 
   def access_mode_allowed(user_id, fast=False):
+      if user_is_admin(user_id):
+          return True
       grant = get_access_grant(user_id)
-      if not user_is_admin(user_id) and (not grant or not grant["active"]):
+      if not grant or not grant["active"]:
           return False
-      if fast and not user_is_admin(user_id) and (
+      if fast and (
           not grant or not grant["active"] or not grant["fast_enabled"] or grant["fast_limit"] <= 0
       ):
           return False
@@ -1307,19 +1288,18 @@ if True:
 
 
   def access_denial_key(user_id, fast=False):
+      if user_is_admin(user_id):
+          return None
       grant = get_access_grant(user_id)
-      if not user_is_admin(user_id) and not grant:
+      if not grant:
           return "access_required"
-      if not user_is_admin(user_id) and not grant["active"]:
+      if not grant["active"]:
           return "access_expired"
-      if fast and not user_is_admin(user_id) and (
+      if fast and (
           not grant or not grant["fast_enabled"] or grant["fast_limit"] <= 0
       ):
           return "fast_access_required"
-      if fast and (
-          get_usage(user_id, True) >= get_user_limits(user_id)[1]
-          or get_fast_usage_total() >= MAX_FAST_USERNAMES_TOTAL
-      ):
+      if fast and get_usage(user_id, True) >= get_user_limits(user_id)[1]:
           return "fast_quota_exceeded"
       if not fast and get_usage(user_id, False) >= get_user_limits(user_id)[0]:
           return "slow_quota_exceeded"
@@ -1352,12 +1332,14 @@ if True:
 
   def quota_check(user_id, usernames, fast=False):
       """Return (allowed, remaining, denial_key) before a batch is scanned."""
+      if user_is_admin(user_id):
+          return True, 10**9, None
       grant = get_access_grant(user_id)
-      if not user_is_admin(user_id) and not grant:
+      if not grant:
           return False, 0, "access_required"
-      if not user_is_admin(user_id) and not grant["active"]:
+      if not grant["active"]:
           return False, 0, "access_expired"
-      if fast and not user_is_admin(user_id) and not grant["fast_enabled"]:
+      if fast and not grant["fast_enabled"]:
           return False, 0, "fast_access_required"
       new_count = len(new_usernames_for_user(usernames))
       used = get_usage(user_id, fast)
@@ -1365,10 +1347,6 @@ if True:
       remaining = max(0, limit - used)
       if new_count > remaining:
           return False, remaining, "fast_quota_exceeded" if fast else "slow_quota_exceeded"
-      if fast:
-          global_remaining = max(0, MAX_FAST_USERNAMES_TOTAL - get_fast_usage_total())
-          if new_count > global_remaining:
-              return False, global_remaining, "fast_quota_exceeded"
       return True, remaining, None
 
 
