@@ -12,6 +12,7 @@ if True:
   import pkgutil
   import urllib.parse
   import aiohttp
+  from flask import Flask
   from datetime import datetime
 
   # The Replit package resolver can leave the unrelated "telegram" package
@@ -67,6 +68,16 @@ if True:
   MAX_DURATION_DAYS = 3650
   MAX_TEXT_FILE_BYTES = 512 * 1024
   INSTAGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+  web_app = Flask(__name__)
+
+  @web_app.route("/")
+  def health_check():
+      return "OK"
+
+  def run_web_server():
+      port = int(os.getenv("PORT", 8080))
+      web_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
   INSTAGRAM_SESSIONID = os.getenv("INSTAGRAM_SESSIONID", "")
   INSTAGRAM_SESSIONIDS = os.getenv("INSTAGRAM_SESSIONIDS", "")
@@ -2448,6 +2459,8 @@ if True:
           keep_alive()
       except ImportError:
           pass
+
+      threading.Thread(target=run_web_server, daemon=True).start()
 
       init_db()
       app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown (post_shutdown).build()
