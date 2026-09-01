@@ -94,7 +94,7 @@ if True:
       """
       if not CLOUDFLARE_PROXY_URL:
           return original_url
-      
+
       # Extract the path after instagram.com domain
       # Handle both www.instagram.com and i.instagram.com
       if "https://www.instagram.com" in original_url:
@@ -104,11 +104,21 @@ if True:
       else:
           # Not an Instagram URL, return as-is
           return original_url
-      
+
       # Combine proxy URL with the path
       # Ensure proper URL formatting (no double slashes)
       proxy_base = CLOUDFLARE_PROXY_URL.rstrip('/')
       return f"{proxy_base}{path}"
+
+  def instagram_request_candidates(original_url):
+      """Try proxy first, then fall back to direct Instagram if the worker is blocked."""
+      candidates = []
+      seen = set()
+      for candidate in [proxy_url(original_url), original_url]:
+          if candidate and candidate not in seen:
+              seen.add(candidate)
+              candidates.append(candidate)
+      return candidates
 
   def load_session_ids():
       """Read the primary secret first, then supported fallback sources."""
@@ -610,19 +620,13 @@ if True:
       return statuses
 
   HEADERS = {
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'accept-language': 'en-US,en;q=0.9,ar;q=0.8',
-      'x-requested-with': 'XMLHttpRequest',
-      'x-ig-app-id': '936619743392459',
-      'x-asbd-id': '129119',
-      'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
-      'sec-fetch-site': 'same-origin',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-dest': 'empty',
-      'referer': 'https://www.instagram.com/',
-      'origin': 'https://www.instagram.com',
+      'User-Agent': 'Instagram 269.0.0.18.75 Android (26/8.0.0; 480dpi; 1080x1920; OnePlus; OnePlus3T; oneplus3; qcom; en_US; 314665258)',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'X-IG-App-ID': '936619743392459',
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-ASBD-ID': '129119',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
   }
 
   def create_button(text, web_app_url=None, color=None, icon_emoji_id=None, callback_data=None, url=None):
@@ -636,53 +640,59 @@ if True:
 
   async def get_logged_in_username(session, session_id=None):
       cookies = get_cookies(session_id)
-      try:
-          async with session.get(proxy_url("https://www.instagram.com/"), headers=HEADERS, cookies=cookies, timeout=30) as resp:
-              if resp.status == 200:
-                  text = await resp.text()
-                  patterns = [
-                      r'"username":"([^"]+)"',
-                      r'"username"\s*:\s*"([^"]+)"',
-                      r'"viewer"\s*:\s*{[^}]*"username"\s*:\s*"([^"]+)"',
-                      r'"user"\s*:\s*{[^}]*"username"\s*:\s*"([^"]+)"'
-                  ]
-                  for pat in patterns:
-                      match = re.search(pat, text)
-                      if match:
-                          username = match.group(1)
-                          if username and username != "null":
-                              return username
-      except:
-          pass
+
+      for request_url in instagram_request_candidates("https://www.instagram.com/"):
+          try:
+              headers = HEADERS.copy()
+              headers['referer'] = 'https://www.instagram.com/'
+              async with session.get(request_url, headers=headers, cookies=cookies, timeout=30) as resp:
+                  if resp.status == 200:
+                      text = await resp.text()
+                      patterns = [
+                          r'"username":"([^"]+)"',
+                          r'"username"\s*:\s*"([^"]+)"',
+                          r'"viewer"\s*:\s*{[^}]*"username"\s*:\s*"([^"]+)"',
+                          r'"user"\s*:\s*{[^}]*"username"\s*:\s*"([^"]+)"'
+                      ]
+                      for pat in patterns:
+                          match = re.search(pat, text)
+                          if match:
+                              username = match.group(1)
+                              if username and username != "null":
+                                  return username
+          except Exception:
+              continue
 
       endpoints = [
           "https://i.instagram.com/api/v1/accounts/current_user/",
           "https://www.instagram.com/api/v1/accounts/current_user/",
       ]
       for url in endpoints:
-          headers = HEADERS.copy()
-          headers['referer'] = 'https://www.instagram.com/'
-          headers['x-ig-app-id'] = '936619743392459'
-          headers['x-asbd-id'] = '129119'
+          for request_url in instagram_request_candidates(url):
+              headers = HEADERS.copy()
+              headers['referer'] = 'https://www.instagram.com/'
+              try:
+                  async with session.get(request_url, headers=headers, cookies=cookies, timeout=30) as resp:
+                      if resp.status == 200:
+                          data = await resp.json()
+                          username = data.get("user", {}).get("username")
+                          if username:
+                              return username
+              except Exception:
+                  continue
+
+      for request_url in instagram_request_candidates("https://www.instagram.com/accounts/access_tool/current_user"):
           try:
-              async with session.get(proxy_url(url), headers=headers, cookies=cookies, timeout=30) as resp:
+              headers = HEADERS.copy()
+              headers['referer'] = 'https://www.instagram.com/'
+              async with session.get(request_url, headers=headers, cookies=cookies, timeout=30) as resp:
                   if resp.status == 200:
-                      data = await resp.json()
-                      return data.get("user", {}).get("username")
-          except:
+                      text = await resp.text()
+                      match = re.search(r'"username"\s*:\s*"([^"]+)"', text)
+                      if match:
+                          return match.group(1)
+          except Exception:
               continue
-      try:
-          async with session.get(
-            proxy_url("https://www.instagram.com/accounts/access_tool/current_user"),
-            headers=HEADERS, cookies=cookies, timeout=30
-          ) as resp:
-              if resp.status == 200:
-                  text = await resp.text()
-                  match = re.search(r'"username"\s*:\s*"([^"]+)"', text)
-                  if match:
-                      return match.group(1)
-      except:
-          pass
 
       return None
 
@@ -691,8 +701,7 @@ if True:
       url = proxy_url(original_url)
       headers = HEADERS.copy()
       headers.update({
-          'host': 'www.instagram.com',
-          'referer': 'https://www.instagram.com/',
+          'Referer': 'https://www.instagram.com/',
       })
       try:
           async with session.get(url, headers=headers, cookies=get_cookies(), timeout=30) as resp:
