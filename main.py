@@ -85,6 +85,30 @@ if True:
       os.path.join(os.path.dirname(os.path.abspath(__file__)), "instagram_sessions.txt"),
   )
   INSTAGRAM_DS_USER_ID = os.getenv("INSTAGRAM_DS_USER_ID", "")
+  CLOUDFLARE_PROXY_URL = os.getenv("CLOUDFLARE_PROXY_URL", "").strip()
+
+  def proxy_url(original_url):
+      """Convert an Instagram URL to route through Cloudflare Worker Proxy.
+      If no proxy is configured, return the original URL.
+      Preserves all URL paths and query parameters.
+      """
+      if not CLOUDFLARE_PROXY_URL:
+          return original_url
+      
+      # Extract the path after instagram.com domain
+      # Handle both www.instagram.com and i.instagram.com
+      if "https://www.instagram.com" in original_url:
+          path = original_url.replace("https://www.instagram.com", "")
+      elif "https://i.instagram.com" in original_url:
+          path = original_url.replace("https://i.instagram.com", "")
+      else:
+          # Not an Instagram URL, return as-is
+          return original_url
+      
+      # Combine proxy URL with the path
+      # Ensure proper URL formatting (no double slashes)
+      proxy_base = CLOUDFLARE_PROXY_URL.rstrip('/')
+      return f"{proxy_base}{path}"
 
   def load_session_ids():
       """Read the primary secret first, then supported fallback sources."""
@@ -613,7 +637,7 @@ if True:
   async def get_logged_in_username(session, session_id=None):
       cookies = get_cookies(session_id)
       try:
-          async with session.get("https://www.instagram.com/", headers=HEADERS, cookies=cookies, timeout=30) as resp:
+          async with session.get(proxy_url("https://www.instagram.com/"), headers=HEADERS, cookies=cookies, timeout=30) as resp:
               if resp.status == 200:
                   text = await resp.text()
                   patterns = [
@@ -641,7 +665,7 @@ if True:
           headers['x-ig-app-id'] = '936619743392459'
           headers['x-asbd-id'] = '129119'
           try:
-              async with session.get(url, headers=headers, cookies=cookies, timeout=30) as resp:
+              async with session.get(proxy_url(url), headers=headers, cookies=cookies, timeout=30) as resp:
                   if resp.status == 200:
                       data = await resp.json()
                       return data.get("user", {}).get("username")
@@ -649,7 +673,7 @@ if True:
               continue
       try:
           async with session.get(
-            "https://www.instagram.com/accounts/access_tool/current_user",
+            proxy_url("https://www.instagram.com/accounts/access_tool/current_user"),
             headers=HEADERS, cookies=cookies, timeout=30
           ) as resp:
               if resp.status == 200:
@@ -663,7 +687,8 @@ if True:
       return None
 
   async def fetch_profile_info(session, username: str):
-      url = f"https://www.instagram.com/{username}/"
+      original_url = f"https://www.instagram.com/{username}/"
+      url = proxy_url(original_url)
       headers = HEADERS.copy()
       headers.update({
           'host': 'www.instagram.com',
