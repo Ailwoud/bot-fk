@@ -153,6 +153,9 @@ if True:
   INSTAGRAM_SESSION_POOL = load_session_ids()
   _session_cursor = 0
   _session_cursor_lock = threading.Lock()
+  _session_file_lock = threading.Lock()
+  _retired_sessions = set()
+  SESSION_FAILURE = object()
 
   # ---------------------------------------------------------------------------
   # Translations (no emojis)
@@ -583,6 +586,8 @@ if True:
 
       if sessionid_value is None:
           with _session_cursor_lock:
+              if not INSTAGRAM_SESSION_POOL:
+                  raise ValueError("No Instagram session IDs are configured")
               sessionid_value = INSTAGRAM_SESSION_POOL[_session_cursor % len(INSTAGRAM_SESSION_POOL)]
               _session_cursor += 1
 
@@ -600,7 +605,46 @@ if True:
       return cookies
 
 
-  async def verify_instagram_sessions(session):
+  def retire_session(session_id):
+      """Remove a burned session from memory and its source file."""
+      with _session_file_lock:
+          if session_id in _retired_sessions:
+              return None
+          _retired_sessions.add(session_id)
+          INSTAGRAM_SESSION_POOL[:] = [
+              value for value in INSTAGRAM_SESSION_POOL if value != session_id
+          ]
+
+          removed_line = None
+          try:
+              with open(INSTAGRAM_SESSIONS_FILE, "r", encoding="utf-8") as file:
+                  lines = file.readlines()
+              kept_lines = []
+              for line_number, line in enumerate(lines, start=1):
+                  if line.strip() == session_id and removed_line is None:
+                      removed_line = line_number
+                      continue
+                  kept_lines.append(line)
+              if removed_line is not None:
+                  with open(INSTAGRAM_SESSIONS_FILE, "w", encoding="utf-8") as file:
+                      file.writelines(kept_lines)
+          except OSError:
+              pass
+          return removed_line
+
+
+  async def notify_retired_session(bot, line_number):
+      if bot and line_number is not None:
+          try:
+              await bot.send_message(
+                  NOTIFICATION_GROUP_ID,
+                  f"تم تعطيل سيشن في السطر {line_number}",
+              )
+          except Exception:
+              pass
+
+
+  async def verify_instagram_sessions(session, bot=None):
       """Check every configured session and keep only working sessions for scans."""
       configured = list(INSTAGRAM_SESSION_POOL)
       statuses = []
@@ -615,6 +659,9 @@ if True:
           })
           if working:
               working_sessions.append(session_id)
+          else:
+              line_number = retire_session(session_id)
+              await notify_retired_session(bot, line_number)
 
       INSTAGRAM_SESSION_POOL[:] = working_sessions
       return statuses
@@ -696,58 +743,68 @@ if True:
 
       return None
 
-  async def fetch_profile_info(session, username: str):
+  async def fetch_profile_info(session, username: str, bot=None):
       original_url = f"https://www.instagram.com/{username}/"
-      url = proxy_url(original_url)
       headers = HEADERS.copy()
-      headers.update({
-          'Referer': 'https://www.instagram.com/',
-      })
-      try:
-          async with session.get(url, headers=headers, cookies=get_cookies(), timeout=30) as resp:
-              if resp.status == 404 or resp.status != 200:
-                  return True
+      headers['Referer'] = 'https://www.instagram.com/'
+      with _session_cursor_lock:
+          session_ids = list(INSTAGRAM_SESSION_POOL)
+          if session_ids:
+              start = _session_cursor % len(session_ids)
+              _session_cursor += 1
+              session_ids = session_ids[start:] + session_ids[:start]
 
-              text = await resp.text()
-              low_text = text.lower()
-
-              banned_phrases = [
-                  "sorry, this page isn't available",
-                  "the link you followed may be broken",
-                  "user not found",
-                  "this account is banned",
-                  "account has been banned",
-                  "page not found",
-                  "is_banned\":true",
-                  "is_disabled\":true",
-                  "is_banned\": true",
-                  "is_disabled\": true"
-              ]
-              for phrase in banned_phrases:
-                  if phrase in low_text:
+      for session_id in session_ids:
+          try:
+              async with session.get(
+                  proxy_url(original_url),
+                  headers=headers,
+                  cookies=get_cookies(session_id),
+                  timeout=30,
+              ) as resp:
+                  if resp.status == 404:
                       return True
+                  text = await resp.text()
+                  low_text = text.lower()
+                  session_error = resp.status in (401, 403, 407, 429)
+                  session_error = session_error or any(
+                      marker in low_text
+                      for marker in (
+                          'login_required', 'challengerequired',
+                          '/accounts/login', '/challenge/',
+                          'please wait a few minutes', 'rate limit',
+                          'temporarily blocked', 'checkpoint_required',
+                      )
+                  )
+                  if resp.status != 200 or session_error:
+                      raise RuntimeError("Instagram session rejected")
 
-              if '"profilePage_' in text or '"user_id"' in text or 'edge_followed_by' in text:
-                  if '"is_banned":true' in text or '"is_disabled":true' in text:
+                  banned_phrases = [
+                      "sorry, this page isn't available",
+                      "the link you followed may be broken",
+                      "user not found", "this account is banned",
+                      "account has been banned", "page not found",
+                      'is_banned":true', 'is_disabled":true',
+                      'is_banned": true', 'is_disabled": true',
+                  ]
+                  if any(phrase in low_text for phrase in banned_phrases):
                       return True
-                  return False
-
-              if 'window.__INITIAL_STATE__' in text:
-                  try:
-                      json_str = text.split('window.__INITIAL_STATE__=')[1].split(';</script>')[0]
-                      data = json.loads(json_str)
-                      user_data = data.get("user", {})
-                      if not user_data:
-                          return True
-                      if user_data.get("is_banned") or user_data.get("is_disabled"):
-                          return True
-                      return False
-                  except:
-                      pass
-
-              return True
-      except:
-          return True
+                  if '"profilePage_' in text or '"user_id"' in text or 'edge_followed_by' in text:
+                      return '"is_banned":true' in text or '"is_disabled":true' in text
+                  if 'window.__INITIAL_STATE__' in text:
+                      try:
+                          json_str = text.split('window.__INITIAL_STATE__=')[1].split(';</script>')[0]
+                          user_data = json.loads(json_str).get("user", {})
+                          return bool(user_data.get("is_banned") or user_data.get("is_disabled"))
+                      except (IndexError, json.JSONDecodeError, AttributeError):
+                          return None
+                  return None
+          except RuntimeError:
+              line_number = retire_session(session_id)
+              await notify_retired_session(bot, line_number)
+          except Exception:
+              return None
+      return None
 
   def get_db_connection():
       turso_url = os.getenv("TURSO_DB_URL", "").strip()
@@ -1248,7 +1305,7 @@ if True:
                        if last_checked_at and now - last_checked_at < scan_interval:
                            continue
                        async with sem:
-                           current_banned = await fetch_profile_info(session, username)
+                           current_banned = await fetch_profile_info(session, username, application.bot)
                            update_monitor_checked(username, time.time())
                            if current_banned is None:
                                # Inconclusive check (rate limit / blocked / odd
@@ -1600,7 +1657,7 @@ if True:
           await wait_msg.edit_text(tr(lang, "chk_error"), parse_mode="Markdown")
           return
 
-      is_banned = await fetch_profile_info(session, username)
+      is_banned = await fetch_profile_info(session, username, context.bot)
       current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
       profile_link = f"https://instagram.com/{username}"
       reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(tr(lang, "btn_open_ig"), url=profile_link)]])
@@ -1622,10 +1679,10 @@ if True:
           await wait_msg.edit_text(caption, parse_mode="Markdown", reply_markup=reply_markup)
 
 
-  async def run_multi_add(session, chat_id, usernames, sem, added_by, fast=False):
+  async def run_multi_add(session, chat_id, usernames, sem, added_by, bot=None, fast=False):
       async def one(u):
           async with sem:
-              is_banned = await fetch_profile_info(session, u)
+              is_banned = await fetch_profile_info(session, u, bot)
               # If the check was inconclusive, add it as active for now -
               # the monitor loop will re-check and correct the status soon,
               # instead of us falsely reporting a brand-new account as banned.
@@ -2159,6 +2216,7 @@ if True:
           usernames,
           sem,
           added_by=update.effective_user.id,
+          bot=context.bot,
           fast=fast,
       )
       await edit_and_reply_long(
@@ -2353,7 +2411,7 @@ if True:
           if not active_access_exists(update.effective_user.id):
               await update.message.reply_text(tr(lang, "access_required"), parse_mode="Markdown")
               return
-          is_banned = await fetch_profile_info(session, username)
+          is_banned = await fetch_profile_info(session, username, context.bot)
           if is_banned is None:
               await update.message.reply_text(tr(lang, "chk_error"), parse_mode="Markdown")
               return
@@ -2439,7 +2497,7 @@ if True:
       session = aiohttp.ClientSession()
       application.bot_data["http_session"] = session
 
-      statuses = await verify_instagram_sessions(session)
+      statuses = await verify_instagram_sessions(session, application.bot)
       application.bot_data["session_statuses"] = statuses
       application.bot_data["instagram_ready"] = bool(INSTAGRAM_SESSION_POOL)
       working = sum(1 for item in statuses if item["working"])
