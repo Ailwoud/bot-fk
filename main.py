@@ -26,7 +26,8 @@ if True:
       ):
           try:
               module = importlib.import_module(module_info.name)
-          except Exception:
+          except Exception as error:
+              print(f"Instagram session check failed for {request_url}: {error}")
               continue
           if hasattr(module, name):
               value = getattr(module, name)
@@ -728,7 +729,8 @@ if True:
                           username = data.get("user", {}).get("username")
                           if username:
                               return username
-              except Exception:
+              except Exception as error:
+                  print(f"Instagram session check failed for {request_url}: {error}")
                   continue
 
       for request_url in instagram_request_candidates("https://www.instagram.com/accounts/access_tool/current_user"):
@@ -739,7 +741,8 @@ if True:
                       match = re.search(r'"username"\s*:\s*"([^"]+)"', text)
                       if match:
                           return match.group(1)
-          except Exception:
+          except Exception as error:
+              print(f"Instagram session check failed for {request_url}: {error}")
               continue
 
       return None
@@ -771,6 +774,9 @@ if True:
                   if resp.status == 404:
                       return True
                   text = await resp.text()
+                  if not text.strip():
+                      print(f"Instagram session returned an empty response for @{username}")
+                      continue
                   low_text = text.lower()
                   rejected = resp.status in (401, 403, 407, 429) or any(
                       marker in low_text
@@ -802,12 +808,16 @@ if True:
                           user_data = json.loads(json_str).get("user", {})
                           return bool(user_data.get("is_banned") or user_data.get("is_disabled"))
                       except (IndexError, json.JSONDecodeError, AttributeError):
-                          return None
-                  return None
-          except RuntimeError:
+                          print(f"Instagram returned an invalid profile response for @{username}")
+                          continue
+                  print(f"Instagram returned an unrecognized profile response for @{username}")
+                  continue
+          except RuntimeError as error:
+              print(f"Instagram session rejected while checking @{username}: {error}")
               line_number = retire_session(session_id)
               await notify_retired_session(bot, line_number)
-          except Exception:
+          except Exception as error:
+              print(f"Instagram request failed while checking @{username}: {error}")
               continue
       return None
 
@@ -1667,7 +1677,7 @@ if True:
       profile_link = f"https://instagram.com/{username}"
       reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(tr(lang, "btn_open_ig"), url=profile_link)]])
 
-      status_str = tr(lang, "status_banned") if is_banned else tr(lang, "status_active")
+      status_str = format_status(lang, is_banned)
       caption = tr(
           lang,
           "chk_result",
@@ -1675,11 +1685,14 @@ if True:
           status=status_str,
           time=current_time,
       ) + rights_text(lang)
-      gif_url = BAN_GIF_URL if is_banned else UNBAN_GIF_URL
+      gif_url = BAN_GIF_URL if is_banned is True else UNBAN_GIF_URL if is_banned is False else None
 
       try:
           await wait_msg.delete()
-          await context.bot.send_animation(update.effective_chat.id, gif_url, caption=caption, parse_mode="Markdown", reply_markup=reply_markup)
+          if gif_url:
+              await context.bot.send_animation(update.effective_chat.id, gif_url, caption=caption, parse_mode="Markdown", reply_markup=reply_markup)
+          else:
+              await context.bot.send_message(update.effective_chat.id, caption, parse_mode="Markdown", reply_markup=reply_markup)
       except Exception:
           await wait_msg.edit_text(caption, parse_mode="Markdown", reply_markup=reply_markup)
 
@@ -1691,7 +1704,7 @@ if True:
               # If the check was inconclusive, add it as active for now -
               # the monitor loop will re-check and correct the status soon,
               # instead of us falsely reporting a brand-new account as banned.
-              is_banned_resolved = bool(is_banned) if is_banned is not None else False
+              is_banned_resolved = is_banned
               added = add_monitor(
                   chat_id,
                   u,
@@ -1714,7 +1727,7 @@ if True:
       lines = [tr(lang, "add_result_header")]
       for username, added, is_banned in results:
           if added:
-              status = tr(lang, "status_banned") if is_banned else tr(lang, "status_active")
+              status = format_status(lang, is_banned)
               lines.append(tr(lang, "add_line_added", username=escape_markdown(username), status=status))
           else:
               lines.append(tr(lang, "add_line_exists", username=escape_markdown(username)))
