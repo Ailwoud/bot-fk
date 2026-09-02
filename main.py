@@ -155,7 +155,6 @@ if True:
   _session_cursor_lock = threading.Lock()
   _session_file_lock = threading.Lock()
   _retired_sessions = set()
-  SESSION_FAILURE = object()
 
   # ---------------------------------------------------------------------------
   # Translations (no emojis)
@@ -606,7 +605,6 @@ if True:
 
 
   def retire_session(session_id):
-      """Remove a burned session from memory and its source file."""
       with _session_file_lock:
           if session_id in _retired_sessions:
               return None
@@ -614,11 +612,10 @@ if True:
           INSTAGRAM_SESSION_POOL[:] = [
               value for value in INSTAGRAM_SESSION_POOL if value != session_id
           ]
-
-          removed_line = None
           try:
               with open(INSTAGRAM_SESSIONS_FILE, "r", encoding="utf-8") as file:
                   lines = file.readlines()
+              removed_line = None
               kept_lines = []
               for line_number, line in enumerate(lines, start=1):
                   if line.strip() == session_id and removed_line is None:
@@ -628,9 +625,9 @@ if True:
               if removed_line is not None:
                   with open(INSTAGRAM_SESSIONS_FILE, "w", encoding="utf-8") as file:
                       file.writelines(kept_lines)
+              return removed_line
           except OSError:
-              pass
-          return removed_line
+              return None
 
 
   async def notify_retired_session(bot, line_number):
@@ -667,13 +664,19 @@ if True:
       return statuses
 
   HEADERS = {
-      'User-Agent': 'Instagram 269.0.0.18.75 Android (26/8.0.0; 480dpi; 1080x1920; OnePlus; OnePlus3T; oneplus3; qcom; en_US; 314665258)',
-      'Accept': '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'X-IG-App-ID': '936619743392459',
-      'X-Requested-With': 'XMLHttpRequest',
-      'X-ASBD-ID': '129119',
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'accept-language': 'en-US,en;q=0.9,ar;q=0.8',
+      'x-requested-with': 'XMLHttpRequest',
+      'x-ig-app-id': '936619743392459',
+      'x-asbd-id': '129119',
+      'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+      'referer': 'https://www.instagram.com/',
+      'origin': 'https://www.instagram.com',
   }
 
   def create_button(text, web_app_url=None, color=None, icon_emoji_id=None, callback_data=None, url=None):
@@ -690,9 +693,7 @@ if True:
 
       for request_url in instagram_request_candidates("https://www.instagram.com/"):
           try:
-              headers = HEADERS.copy()
-              headers['referer'] = 'https://www.instagram.com/'
-              async with session.get(request_url, headers=headers, cookies=cookies, timeout=30) as resp:
+              async with session.get(request_url, headers=HEADERS, cookies=cookies, timeout=30) as resp:
                   if resp.status == 200:
                       text = await resp.text()
                       patterns = [
@@ -718,6 +719,8 @@ if True:
           for request_url in instagram_request_candidates(url):
               headers = HEADERS.copy()
               headers['referer'] = 'https://www.instagram.com/'
+              headers['x-ig-app-id'] = '936619743392459'
+              headers['x-asbd-id'] = '129119'
               try:
                   async with session.get(request_url, headers=headers, cookies=cookies, timeout=30) as resp:
                       if resp.status == 200:
@@ -730,9 +733,7 @@ if True:
 
       for request_url in instagram_request_candidates("https://www.instagram.com/accounts/access_tool/current_user"):
           try:
-              headers = HEADERS.copy()
-              headers['referer'] = 'https://www.instagram.com/'
-              async with session.get(request_url, headers=headers, cookies=cookies, timeout=30) as resp:
+              async with session.get(request_url, headers=HEADERS, cookies=cookies, timeout=30) as resp:
                   if resp.status == 200:
                       text = await resp.text()
                       match = re.search(r'"username"\s*:\s*"([^"]+)"', text)
@@ -746,13 +747,17 @@ if True:
   async def fetch_profile_info(session, username: str, bot=None):
       original_url = f"https://www.instagram.com/{username}/"
       headers = HEADERS.copy()
-      headers['Referer'] = 'https://www.instagram.com/'
+      headers.update({
+          'host': 'www.instagram.com',
+          'referer': 'https://www.instagram.com/',
+      })
       with _session_cursor_lock:
           session_ids = list(INSTAGRAM_SESSION_POOL)
-          if session_ids:
-              start = _session_cursor % len(session_ids)
-              _session_cursor += 1
-              session_ids = session_ids[start:] + session_ids[:start]
+          if not session_ids:
+              return None
+          start = _session_cursor % len(session_ids)
+          _session_cursor += 1
+          session_ids = session_ids[start:] + session_ids[:start]
 
       for session_id in session_ids:
           try:
@@ -766,17 +771,16 @@ if True:
                       return True
                   text = await resp.text()
                   low_text = text.lower()
-                  session_error = resp.status in (401, 403, 407, 429)
-                  session_error = session_error or any(
+                  rejected = resp.status in (401, 403, 407, 429) or any(
                       marker in low_text
                       for marker in (
-                          'login_required', 'challengerequired',
-                          '/accounts/login', '/challenge/',
-                          'please wait a few minutes', 'rate limit',
-                          'temporarily blocked', 'checkpoint_required',
+                          "login_required", "challengerequired",
+                          "/accounts/login", "/challenge/",
+                          "checkpoint_required", "temporarily blocked",
+                          "please wait a few minutes", "rate limit",
                       )
                   )
-                  if resp.status != 200 or session_error:
+                  if resp.status != 200 or rejected:
                       raise RuntimeError("Instagram session rejected")
 
                   banned_phrases = [
@@ -784,8 +788,8 @@ if True:
                       "the link you followed may be broken",
                       "user not found", "this account is banned",
                       "account has been banned", "page not found",
-                      'is_banned":true', 'is_disabled":true',
-                      'is_banned": true', 'is_disabled": true',
+                      "is_banned\":true", "is_disabled\":true",
+                      "is_banned\": true", "is_disabled\": true",
                   ]
                   if any(phrase in low_text for phrase in banned_phrases):
                       return True
@@ -803,7 +807,7 @@ if True:
               line_number = retire_session(session_id)
               await notify_retired_session(bot, line_number)
           except Exception:
-              return None
+              continue
       return None
 
   def get_db_connection():
