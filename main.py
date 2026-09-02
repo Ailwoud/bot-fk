@@ -745,6 +745,7 @@ if True:
       return None
 
   async def fetch_profile_info(session, username: str, bot=None):
+      global _session_cursor
       original_url = f"https://www.instagram.com/{username}/"
       headers = HEADERS.copy()
       headers.update({
